@@ -88,8 +88,8 @@ struct ContentView: View {
                     }
                 }
             }
-            .navigationTitle("Meus Itens")
-            .navigationBarTitleDisplayMode(.large)
+            .navigationTitle("Meus Lembretes")
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button(action: { showingAddSheet = true }) {
@@ -155,9 +155,9 @@ private enum SortOption: String, CaseIterable {
 
     var title: String {
         switch self {
-        case .dateDesc: return "Mais recentes"
-        case .dateAsc: return "Mais antigos"
         case .title: return "Título"
+        case .dateDesc: return "Recentes"
+        case .dateAsc: return "Antigos"
         }
     }
 }
@@ -306,10 +306,10 @@ private struct ContentEmptyState: View {
                     .font(.system(size: 44, weight: .semibold))
                     .foregroundStyle(.secondary)
             }
-            Text("Nada por aqui ainda")
+            Text("Nenhum lembrete adicionado")
                 .font(.title3).bold()
                 .foregroundStyle(.primary)
-            Text("Toque em \"Adicionar\" para criar seu primeiro item.")
+            Text("Toque em \"Adicionar\" para criar um lembrete.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
         }
@@ -321,3 +321,4 @@ private struct ContentEmptyState: View {
     ContentView()
         .modelContainer(for: Item.self, inMemory: true)
 }
+
