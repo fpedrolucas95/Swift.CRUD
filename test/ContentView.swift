@@ -41,60 +41,50 @@ struct ContentView: View {
         return result
     }
 
+    private var sections: [PeriodSection] {
+        let calendar = Calendar.current
+        let groups: [String: [Item]] = Dictionary(grouping: displayedItems, by: { item in
+            let hour = calendar.component(.hour, from: item.timestamp)
+            switch hour {
+            case 5..<12: return "Manhã"
+            case 12..<18: return "Tarde"
+            default: return "Noite"
+            }
+        })
+        let order = ["Manhã", "Tarde", "Noite"]
+        return order.compactMap { key in
+            guard let arr = groups[key], !arr.isEmpty else { return nil }
+            return PeriodSection(id: key, title: key, items: arr)
+        }
+    }
+
     var body: some View {
         NavigationStack {
             VStack(spacing: 12) {
-                HStack(spacing: 12) {
-                    Picker("Ordenar", selection: $sortOption) {
-                        ForEach(SortOption.allCases, id: \.self) { option in
-                            Text(option.title).tag(option)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-
-                    Toggle(isOn: $showFavoritesOnly) {
-                        Image(systemName: showFavoritesOnly ? "star.fill" : "star")
-                            .foregroundStyle(.yellow)
-                    }
-                    .toggleStyle(.button)
-                    .tint(.yellow)
-                    .accessibilityLabel("Apenas favoritos")
-                }
-                .padding(.horizontal)
+                HeaderControls(sortOption: $sortOption, showFavoritesOnly: $showFavoritesOnly)
 
                 if displayedItems.isEmpty {
                     ContentEmptyState()
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
                     ScrollView {
-                        LazyVStack(spacing: 12) {
-                            ForEach(displayedItems) { item in
-                                NavigationLink(value: item) {
-                                    ItemCard(item: item)
-                                }
-                                .buttonStyle(.plain)
-                                .contextMenu {
-                                    Button(item.isFavorite ? "Remover dos favoritos" : "Adicionar aos favoritos") {
-                                        toggleFavorite(item)
+                        LazyVStack(spacing: 16, pinnedViews: [.sectionHeaders]) {
+                            ForEach(sections) { section in
+                                Section {
+                                    ForEach(section.items) { item in
+                                        ItemRow(
+                                            item: item,
+                                            onToggleFavorite: { toggleFavorite(item) },
+                                            onDelete: { delete(item) }
+                                        )
                                     }
-                                    Button(role: .destructive) {
-                                        delete(item)
-                                    } label: {
-                                        Label("Apagar", systemImage: "trash")
-                                    }
-                                }
-                                .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                                    Button(role: .destructive) { delete(item) } label: { Label("Apagar", systemImage: "trash") }
-                                }
-                                .swipeActions(edge: .leading, allowsFullSwipe: true) {
-                                    Button { toggleFavorite(item) } label: { Label("Favorito", systemImage: item.isFavorite ? "star.slash" : "star.fill") }
-                                        .tint(.yellow)
+                                } header: {
+                                    SectionHeader(title: section.title)
                                 }
                             }
-                            .animation(.spring(), value: displayedItems)
-                            .padding(.horizontal)
                         }
                         .padding(.vertical, 8)
+                        .animation(.spring(), value: displayedItems)
                     }
                 }
             }
@@ -112,10 +102,19 @@ struct ContentView: View {
             .searchable(text: $searchText, placement: .navigationBarDrawer(displayMode: .automatic), prompt: "Buscar por título ou nota")
             .sheet(isPresented: $showingAddSheet) {
                 NavigationStack {
-                    ItemFormView { title, notes, date, isFav in
+                    ItemFormView { title, notes, date, isFav, recurrence, reminderEnabled, minutesBefore in
                         withAnimation(.spring()) {
-                            let newItem = Item(title: title, notes: notes, timestamp: date, isFavorite: isFav)
+                            let newItem = Item(
+                                title: title,
+                                notes: notes,
+                                timestamp: date,
+                                isFavorite: isFav,
+                                recurrence: recurrence.rawValue,
+                                reminderEnabled: reminderEnabled,
+                                reminderMinutesBefore: minutesBefore
+                            )
                             modelContext.insert(newItem)
+                            Task { await NotificationManager.scheduleNotification(for: newItem) }
                         }
                         showingAddSheet = false
                     } onCancel: {
@@ -128,6 +127,7 @@ struct ContentView: View {
                 ItemDetailView(item: item)
             }
         }
+        .task { try? await NotificationManager.requestAuthorization() }
     }
 
     private func toggleFavorite(_ item: Item) {
@@ -138,9 +138,16 @@ struct ContentView: View {
 
     private func delete(_ item: Item) {
         withAnimation(.spring()) {
+            Task { NotificationManager.cancelNotification(for: item) }
             modelContext.delete(item)
         }
     }
+}
+
+private struct PeriodSection: Identifiable {
+    let id: String
+    let title: String
+    let items: [Item]
 }
 
 private enum SortOption: String, CaseIterable {
@@ -152,6 +159,73 @@ private enum SortOption: String, CaseIterable {
         case .dateAsc: return "Mais antigos"
         case .title: return "Título"
         }
+    }
+}
+
+private struct HeaderControls: View {
+    @Binding var sortOption: SortOption
+    @Binding var showFavoritesOnly: Bool
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Picker("Ordenar", selection: $sortOption) {
+                ForEach(SortOption.allCases, id: \.self) { option in
+                    Text(option.title).tag(option)
+                }
+            }
+            .pickerStyle(.segmented)
+
+            Toggle(isOn: $showFavoritesOnly) {
+                Image(systemName: showFavoritesOnly ? "star.fill" : "star")
+                    .foregroundStyle(.yellow)
+            }
+            .toggleStyle(.button)
+            .tint(.yellow)
+            .accessibilityLabel("Apenas favoritos")
+        }
+        .padding(.horizontal)
+    }
+}
+
+private struct SectionHeader: View {
+    let title: String
+    var body: some View {
+        HStack {
+            Text(title)
+                .font(.title3).bold()
+                .foregroundStyle(.secondary)
+            Spacer()
+        }
+        .padding(.horizontal)
+        .padding(.top, 4)
+        .background(Color.clear)
+    }
+}
+
+private struct ItemRow: View {
+    let item: Item
+    let onToggleFavorite: () -> Void
+    let onDelete: () -> Void
+
+    var body: some View {
+        NavigationLink(value: item) {
+            ItemCard(item: item)
+        }
+        .buttonStyle(.plain)
+        .contextMenu {
+            Button(item.isFavorite ? "Remover dos favoritos" : "Adicionar aos favoritos", action: onToggleFavorite)
+            Button(role: .destructive, action: onDelete) {
+                Label("Apagar", systemImage: "trash")
+            }
+        }
+        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+            Button(role: .destructive, action: onDelete) { Label("Apagar", systemImage: "trash") }
+        }
+        .swipeActions(edge: .leading, allowsFullSwipe: true) {
+            Button(action: onToggleFavorite) { Label("Favorito", systemImage: item.isFavorite ? "star.slash" : "star.fill") }
+                .tint(.yellow)
+        }
+        .padding(.horizontal)
     }
 }
 
